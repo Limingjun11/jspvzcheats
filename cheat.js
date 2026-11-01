@@ -6,13 +6,10 @@
 
   // ================= 1. 状态 =================
   var state = window.__cheat = {
-    peaPrice: false,
-    peaFast: false,
-    allFast: false,
-    zeroCool: false,
     infSun: false,
     colPlant: false,
-    pendingCart: false
+    pendingCart: false,
+    globalTick: 140 // 默认原版射速
   };
 
   // ================= 2. 强制修复并注入整列种植 Hook =================
@@ -83,7 +80,73 @@
     return ret;
   };
 
-  // ================= 3. 注入 UI 样式 =================
+  // ================= 3. 缓存原始植物数据 & 注入全植物射速 Hook =================
+  var origPlantStats = {};
+  function cachePlantStats() {
+      Object.keys(window).forEach(function (k) {
+          try {
+              var v = window[k];
+              if (typeof v === 'function' && v.prototype && typeof v.prototype.Birth === 'function' && 'SunNum' in v.prototype) {
+                  if (!origPlantStats[k]) {
+                      origPlantStats[k] = {
+                          SunNum: v.prototype.SunNum,
+                          coolTime: v.prototype.coolTime
+                      };
+                  }
+              }
+          } catch (e) {}
+      });
+  }
+
+  function installGlobalFastHook() {
+      var fastLoop = function (b, c) {
+          var a = this.id;
+          this.NormalAttack(b);
+          oSym.addTask(state.globalTick, function (e, f, h) {
+            var g; (g = $P[e]) && g.AttackCheck1(f, h);
+          }, [a, b, c]);
+      };
+      
+      var patchProto = function(proto) {
+          if (proto && proto.CheckLoop && !proto.CheckLoop.__isHooked) {
+              var orig = proto.CheckLoop;
+              proto.CheckLoop = function() {
+                  if (state.globalTick >= 140) return orig.apply(this, arguments);
+                  return fastLoop.apply(this, arguments);
+              };
+              proto.CheckLoop.__isHooked = true;
+          }
+      };
+
+      if (typeof CPlants !== 'undefined') patchProto(CPlants.prototype);
+      if (typeof oSplitPea !== 'undefined') patchProto(oSplitPea.prototype);
+      if (typeof oCactus !== 'undefined') {
+          patchProto(oCactus.prototype);
+          if (oCactus.prototype.CheckLoop2 && !oCactus.prototype.CheckLoop2.__isHooked) {
+              var orig2 = oCactus.prototype.CheckLoop2;
+              oCactus.prototype.CheckLoop2 = function() {
+                  if (state.globalTick >= 140) return orig2.apply(this, arguments);
+                  return fastLoop.apply(this, arguments);
+              };
+              oCactus.prototype.CheckLoop2.__isHooked = true;
+          }
+      }
+  }
+
+  if (typeof CPlants !== 'undefined') {
+      cachePlantStats();
+      installGlobalFastHook();
+  } else {
+      var checkExist = setInterval(function() {
+          if (typeof CPlants !== 'undefined') {
+              cachePlantStats();
+              installGlobalFastHook();
+              clearInterval(checkExist);
+          }
+      }, 100);
+  }
+
+  // ================= 4. 注入 UI 样式 =================
   var style = document.createElement('style');
   style.textContent = [
     '#__cheatBall{position:fixed;right:20px;bottom:20px;width:56px;height:56px;border-radius:50%;background:radial-gradient(circle at 30% 30%,#4caf50,#1b5e20);color:#fff;font-size:24px;display:flex;align-items:center;justify-content:center;cursor:pointer;z-index:999999;box-shadow:0 4px 12px rgba(0,0,0,.4);user-select:none;transition:transform .2s;}',
@@ -91,6 +154,9 @@
     '#__cheatPanel{position:fixed;right:20px;bottom:90px;width:220px;max-height:80vh;overflow-y:auto;background:rgba(30,30,30,.96);border:1px solid #4caf50;border-radius:10px;padding:8px;z-index:999998;display:none;box-shadow:0 4px 20px rgba(0,0,0,.5);color:#eee;font-family:sans-serif;font-size:13px;}',
     '#__cheatPanel.open{display:block;}',
     '#__cheatPanel .title{font-weight:bold;color:#4caf50;padding:4px 8px 8px;border-bottom:1px solid #333;margin-bottom:6px;text-align:center;}',
+    '.range-group{padding:8px 10px;margin:6px 0;background:#333;border-radius:6px;font-size:12px;}',
+    '.range-group label{display:flex;justify-content:space-between;margin-bottom:6px;color:#eee;}',
+    '.range-group input[type="range"]{width:100%;cursor:pointer;accent-color:#4caf50;}',
     '#__cheatPanel .btn{padding:8px 10px;margin:4px 0;border-radius:6px;background:#333;cursor:pointer;user-select:none;display:flex;justify-content:space-between;align-items:center;transition:background .15s;}',
     '#__cheatPanel .btn:hover{background:#444;}',
     '#__cheatPanel .btn.on{background:#2e7d32;color:#fff;}',
@@ -103,7 +169,7 @@
   ].join('');
   document.head.appendChild(style);
 
-  // ================= 4. 生成悬浮球与面板 =================
+  // ================= 5. 生成悬浮球与面板 =================
   var ball = document.createElement('div');
   ball.id = '__cheatBall';
   ball.textContent = '⚙';
@@ -113,10 +179,9 @@
   panel.id = '__cheatPanel';
   panel.innerHTML = [
     '<div class="title">🛠 作弊面板</div>',
-    '<div class="btn" data-key="peaPrice">豌豆0阳光<span class="st">OFF</span></div>',
-    '<div class="btn" data-key="peaFast">豌豆5tick射速<span class="st">OFF</span></div>',
-    '<div class="btn" data-key="allFast">全植物5tick射速<span class="st">OFF</span></div>',
-    '<div class="btn" data-key="zeroCool">全植物0冷却<span class="st">OFF</span></div>',
+    '<div class="range-group"><label>全植物射速 <span id="val-fast">1x (140t)</span></label><input type="range" id="slider-fast" min="1" max="10" value="1" step="1"></div>',
+    '<div class="range-group"><label>全植物阳光 <span id="val-sun">100%</span></label><input type="range" id="slider-sun" min="0" max="100" value="100" step="5"></div>',
+    '<div class="range-group"><label>全植物冷却 <span id="val-cool">100%</span></label><input type="range" id="slider-cool" min="0" max="100" value="100" step="5"></div>',
     '<div class="btn" data-key="infSun">无限阳光<span class="st">OFF</span></div>',
     '<div class="btn" data-key="colPlant">整列种植<span class="st">OFF</span></div>',
     '<div class="btn" data-key="clearZombies" data-action="true">清图僵尸<span class="st">点击</span></div>',
@@ -126,126 +191,44 @@
 
   ball.onclick = function () { panel.classList.toggle('open'); };
 
-  // ================= 5. 功能实现 =================
+  // 绑定滑块事件
+  function updateStats() {
+      var fastLvl = Number(document.getElementById('slider-fast').value);
+      var sunPct = Number(document.getElementById('slider-sun').value);
+      var coolPct = Number(document.getElementById('slider-cool').value);
+
+      // 等级 1 = 140tick, 等级 10 = 5tick
+      state.globalTick = 140 - (fastLvl - 1) * 15;
+
+      document.getElementById('val-fast').textContent = fastLvl + 'x (' + state.globalTick + 't)';
+      document.getElementById('val-sun').textContent = sunPct + '%';
+      document.getElementById('val-cool').textContent = coolPct + '%';
+
+      Object.keys(origPlantStats).forEach(function (k) {
+          if (!window[k]) return;
+          var proto = window[k].prototype;
+          var orig = origPlantStats[k];
+
+          if (orig.SunNum !== undefined) {
+              proto.SunNum = Math.floor(orig.SunNum * (sunPct / 100));
+          }
+          if (orig.coolTime !== undefined) {
+              proto.coolTime = orig.coolTime * (coolPct / 100);
+          }
+      });
+      
+      // 尝试刷新一下卡槽UI
+      if (typeof MonitorCard === 'function') {
+          try { MonitorCard(); } catch(e){}
+      }
+  }
+
+  document.getElementById('slider-fast').addEventListener('input', updateStats);
+  document.getElementById('slider-sun').addEventListener('input', updateStats);
+  document.getElementById('slider-cool').addEventListener('input', updateStats);
+
+  // ================= 6. 功能实现 =================
   var feats = {};
-
-  feats.peaPrice = {
-    on: function () {
-      if (state._peaPriceBackup === undefined) state._peaPriceBackup = oPeashooter.prototype.SunNum;
-      oPeashooter.prototype.SunNum = 0; return true;
-    },
-    off: function () {
-      if (state._peaPriceBackup !== undefined) oPeashooter.prototype.SunNum = state._peaPriceBackup;
-      return true;
-    }
-  };
-
-  feats.peaFast = {
-    on: function () {
-      if (oPeashooter.prototype.hasOwnProperty('CheckLoop')) {
-        state._peaFastHadOwn = true;
-        state._peaFastOwnBackup = oPeashooter.prototype.CheckLoop;
-      } else state._peaFastHadOwn = false;
-      
-      oPeashooter.prototype.CheckLoop = function (b, c) {
-        var a = this.id;
-        this.NormalAttack(b);
-        oSym.addTask(5, function (e, f, h) {
-          var g; (g = $P[e]) && g.AttackCheck1(f, h);
-        }, [a, b, c]);
-      };
-      
-      if (typeof oSplitPea !== 'undefined' && oSplitPea.prototype.hasOwnProperty('CheckLoop')) {
-        state._splitBackup = oSplitPea.prototype.CheckLoop;
-        oSplitPea.prototype.CheckLoop = function (a, b) {
-          this.NormalAttack(b);
-          oSym.addTask(5, function (c, e, g) {
-            var f; (f = $P[c]) && f.AttackCheck1(e, g);
-          }, [this.id, a, b]);
-        };
-      }
-      return true;
-    },
-    off: function () {
-      if (state._peaFastHadOwn) oPeashooter.prototype.CheckLoop = state._peaFastOwnBackup;
-      else delete oPeashooter.prototype.CheckLoop;
-      if (typeof oSplitPea !== 'undefined' && state._splitBackup) {
-        oSplitPea.prototype.CheckLoop = state._splitBackup;
-        state._splitBackup = null;
-      }
-      return true;
-    }
-  };
-
-  feats.allFast = {
-    on: function () {
-      state._allFastBackups = {};
-      var fastLoop = function (b, c) {
-        var a = this.id;
-        this.NormalAttack(b);
-        oSym.addTask(5, function (e, f, h) {
-          var g; (g = $P[e]) && g.AttackCheck1(f, h);
-        }, [a, b, c]);
-      };
-
-      if (typeof CPlants !== 'undefined' && CPlants.prototype.CheckLoop) {
-        state._allFastBackups.CPlants = CPlants.prototype.CheckLoop;
-        CPlants.prototype.CheckLoop = fastLoop;
-      }
-      if (typeof oSplitPea !== 'undefined' && oSplitPea.prototype.CheckLoop) {
-        state._allFastBackups.oSplitPea = oSplitPea.prototype.CheckLoop;
-        oSplitPea.prototype.CheckLoop = fastLoop;
-      }
-      if (typeof oCactus !== 'undefined') {
-        if (oCactus.prototype.CheckLoop) {
-          state._allFastBackups.oCactus = oCactus.prototype.CheckLoop;
-          oCactus.prototype.CheckLoop = fastLoop;
-        }
-        if (oCactus.prototype.CheckLoop2) {
-          state._allFastBackups.oCactus2 = oCactus.prototype.CheckLoop2;
-          oCactus.prototype.CheckLoop2 = fastLoop;
-        }
-      }
-      return true;
-    },
-    off: function () {
-      if (!state._allFastBackups) return true;
-      if (state._allFastBackups.CPlants && typeof CPlants !== 'undefined') CPlants.prototype.CheckLoop = state._allFastBackups.CPlants;
-      if (state._allFastBackups.oSplitPea && typeof oSplitPea !== 'undefined') oSplitPea.prototype.CheckLoop = state._allFastBackups.oSplitPea;
-      if (state._allFastBackups.oCactus && typeof oCactus !== 'undefined') oCactus.prototype.CheckLoop = state._allFastBackups.oCactus;
-      if (state._allFastBackups.oCactus2 && typeof oCactus !== 'undefined') oCactus.prototype.CheckLoop2 = state._allFastBackups.oCactus2;
-      state._allFastBackups = null;
-      return true;
-    }
-  };
-
-  feats.zeroCool = {
-    on: function () {
-      state._coolBackup = state._coolBackup || {};
-      Object.keys(window).forEach(function (k) {
-        try {
-          var v = window[k];
-          if (typeof v !== 'function' || !v.prototype) return;
-          if (typeof v.prototype.Birth !== 'function') return;
-          if (!('SunNum' in v.prototype)) return;
-          if (typeof v.prototype.coolTime !== 'number') return;
-          if (!(k in state._coolBackup)) state._coolBackup[k] = v.prototype.coolTime;
-          v.prototype.coolTime = 0;
-        } catch (e) {}
-      });
-      return true;
-    },
-    off: function () {
-      if (!state._coolBackup) return true;
-      Object.keys(state._coolBackup).forEach(function (k) {
-        try {
-          var v = window[k];
-          if (v && v.prototype && 'coolTime' in v.prototype) v.prototype.coolTime = state._coolBackup[k];
-        } catch (e) {}
-      });
-      state._coolBackup = null; return true;
-    }
-  };
 
   feats.infSun = {
     on: function () {
@@ -296,12 +279,11 @@
     }
   };
 
-  // 提前下一波（完美适配源码，直接强推进度）
   feats.nextWave = {
     run: function () {
       if (typeof oP !== 'undefined') {
         try {
-          oP.NumZombies = 0; // 强制把当前剩余僵尸数算作0
+          oP.NumZombies = 0;
           oP.FlagZombieWaitTime = 1;
           oP.FlagMaxWaitTime = 1;
           
@@ -318,7 +300,7 @@
     }
   };
 
-  // ================= 6. 按钮事件绑定 =================
+  // ================= 7. 按钮事件绑定 =================
   panel.querySelectorAll('.btn').forEach(function (btn) {
     var k = btn.dataset.key, stEl = btn.querySelector('.st');
     
@@ -344,7 +326,7 @@
     };
   });
 
-  // ================= 7. 右上角小推车 (铲子选格) =================
+  // ================= 8. 右上角小推车 =================
   var cartBtn = document.createElement('div');
   cartBtn.id = '__cartBtn';
   cartBtn.title = '小推车：点击激活，再点草地格子种下';
@@ -413,5 +395,65 @@
     }
   };
 
-  console.log('✅ 作弊面板注入成功！已移除铲子功能，保留提前下一波。');
+  console.log('✅ 作弊面板注入成功！');
+
+  // ================= 9. 替换资源 (BGM, 图标, 图鉴, 背景) =================
+  var customBgmUrl = "https://gh-proxy.com/https://github.com/Limingjun11/jspvzcheats/releases/download/main/1.ogg"; 
+  var newTrophyUrl = "https://gh-proxy.com/https://github.com/Limingjun11/jspvzcheats/releases/download/main/image.png";
+  var newBookUrl = "https://gh-proxy.com/https://github.com/Limingjun11/jspvzcheats/releases/download/main/image2.png";
+  var newBgUrl = "https://gh-proxy.com/https://github.com/Limingjun11/jspvzcheats/releases/download/main/bg.jpg";
+  var bgmReplaced = false;
+
+  document.addEventListener('click', function startCustomBgm() {
+      if (bgmReplaced) return;
+      bgmReplaced = true;
+
+      if (window.oAudio) {
+          for (var key in window.oAudio) {
+              try {
+                  window.oAudio[key].pause();
+                  window.oAudio[key].currentTime = 0;
+              } catch (e) {}
+          }
+      }
+
+      var origPlayMusic = window.PlayMusic;
+      window.PlayMusic = function(name) {
+          if (name === "Look up at the Sky" || name === "Faster" || name === "Faster.ogg") {
+              return; 
+          }
+          origPlayMusic.apply(this, arguments);
+      };
+
+      window.__myBgm = new Audio(customBgmUrl);
+      window.__myBgm.loop = true;
+      window.__myBgm.volume = 0.5;
+      window.__myBgm.play().catch(function(e) {
+          console.log("BGM播放失败，请检查链接:", e);
+      });
+
+      console.log("🎵 自定义 BGM 已启动！");
+  }, { once: true }); 
+
+  var styleEl = document.createElement('style');
+  styleEl.type = 'text/css';
+  var cssText = `
+      #iSurfaceBackground .handbook {
+          background: url("${newBookUrl}") no-repeat !important;
+      }
+  `;
+  styleEl.appendChild(document.createTextNode(cssText));
+  document.head.appendChild(styleEl);
+
+  setInterval(function() {
+      var targetImg = document.querySelector('img[onclick*="System/GameData"]');
+      if (targetImg && targetImg.src.indexOf('Sunflower_trophy32.png') > -1) {
+          targetImg.src = newTrophyUrl;
+      }
+      
+      var bgImg = document.querySelector('#iSurfaceBackground img[usemap]');
+      if (bgImg && bgImg.src.indexOf('bg.jpg') === -1) {
+          bgImg.src = newBgUrl;
+      }
+  }, 1000);
 })();
